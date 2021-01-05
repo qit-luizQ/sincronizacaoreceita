@@ -1,7 +1,10 @@
 package com.luizq.sincronizacaoreceita.config;
 
-import java.time.LocalDateTime;
+import java.text.Format;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 
+import com.luizq.sincronizacaoreceita.SincronizacaoReceitaApplication;
 import com.luizq.sincronizacaoreceita.model.ContaCorrente;
 import com.luizq.sincronizacaoreceita.processor.ContaProcessor;
 
@@ -21,9 +24,14 @@ import org.springframework.batch.item.file.transform.DelimitedLineAggregator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+
+/**
+ * @author Luiz Quirino
+ * DESCRIÇÃO DA CLASSE
+ *  - ConfiguraBatch.java é a classe para a configuração do Spring Batch.
+ */
 
 @Configuration
 @EnableBatchProcessing
@@ -35,55 +43,65 @@ public class ConfiguraBatch {
     @Autowired
     public StepBuilderFactory stepBuilderFactory;
 
+    Date date = new Date();
+    Format formataData = new SimpleDateFormat("YYYYMMdd");
     
-
+  
+    /**Leitura do Arquivo CSV
+    TODO: Implementar tratamento de erro da seguinte forma:
+        if(fileName != null){
+          try{
+              reader()
+            }
+          }Exceção{
+            "Arquivo não encontrado"
+          }
+        }
+    */
     @Bean
     public FlatFileItemReader<ContaCorrente> reader(){
         return new FlatFileItemReaderBuilder<ContaCorrente>()
                     .name("contaCSVReader")
-                    .resource( new ClassPathResource("dados_conta.csv"))
+                    .resource( new FileSystemResource(SincronizacaoReceitaApplication.fileName))
                     .delimited()
+                    .delimiter(";")
                     .names(new String[] {"agencia","conta","saldo","status"})
+                    .linesToSkip(1)
                     .fieldSetMapper(new BeanWrapperFieldSetMapper<ContaCorrente>(){{
                         setTargetType(ContaCorrente.class);
                     }})
                     .build();
     }
 
+    //Processa os dados do arquivo CSV, passa os dados para ReceitaService e Devolve os dados modificados para writer() 
     @Bean
     public ContaProcessor process(){
         return new ContaProcessor();
     }
 
+    //Escreve o arquivo com os dados processados, adicionando a coluna resultados.
+    //Todos os dados dos arquivos de entrada ".csv" processados no mesmo dia serão adicionados ao fim do processamento do arquivo".csv" processado antes. 
     @Bean
     public ItemWriter<ContaCorrente> writer() {
-        Resource outputResource =
-            new FileSystemResource("output-" + LocalDateTime.now() + ".csv");
-        // Create writer instance
+        Resource outputResource = new FileSystemResource("enviados\\output_"+formataData.format(date)+".csv");
         FlatFileItemWriter<ContaCorrente> writer = new FlatFileItemWriter<>();
-    
-        // Set output file location
         writer.setResource(outputResource);
-    
-        // All job repetitions should "append" to same output file
         writer.setAppendAllowed(true);
-    
-        // Name field values sequence based on object properties
         writer.setLineAggregator(
             new DelimitedLineAggregator<>() {
               {
                 setDelimiter(";");
-                setFieldExtractor(
-                    new BeanWrapperFieldExtractor<>() {
+                setFieldExtractor(new BeanWrapperFieldExtractor<>() {
                       {
-                        setNames(new String[] {"agencia", "conta","saldo","status"});
+                        setNames(new String[] {"agencia", "conta","saldo","status","resultado"});
                       }
                     });
               }
             });
         return writer;
       }
-
+    
+    //Configura Job do Batch com o Step como parâmetro
     @Bean
     public Job lerContaCSV(Step step1){
         return jobBuilderFactory.get("lerContaCSV")
@@ -92,8 +110,9 @@ public class ConfiguraBatch {
                 .build();
     }
 
+    //Configura Step do Batch.
     @Bean
-    public Step step1(ItemWriter<ContaCorrente> writer){
+    public Step step1(){
         return stepBuilderFactory.get("step1").<ContaCorrente,ContaCorrente>chunk(5)
                 .reader(reader())
                 .processor(process())
